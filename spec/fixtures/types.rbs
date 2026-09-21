@@ -1,0 +1,10 @@
+type ButtonComponent::Color = :primary | :warning | :danger | :success | :info
+type ButtonComponent::Size = :sm | :md | :lg | :'2xl'
+type ButtonComponent::Variant = :outline | :solid | :ghost | :tonal
+type ButtonComponent::Shape = :square | :rounded | :pill | :circle
+type IconComponent::NameSymbol = :ruby | :rails | :javascript
+  | :'arrow-right' # comment
+  | :'arrow-left'
+type IconComponent::NameString = "ruby" | "rails" | "javascript"
+  | "arrow-right"
+  | "arrow-left"

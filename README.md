@@ -1,62 +1,45 @@
 # RBS Enum
 
-Use the allowed values from an RBS type alias in your Ruby code. This avoids maintaining the same list twice when you need it for a form, validation, or component options.
-
-## What it actually does
-
-RBS Enum does **not** depend on the `rbs` gem and does **not** parse RBS. It scans `sig/**/*.rbs` with a regular expression, finds the line that declares the alias, and reads flat unions of symbol or string literals out of it.
-
-That means:
-
-- A flat union of literals works: `type status = :draft | :sent`.
-- Anything else returns an empty array: references to other aliases, generics, record types, interfaces, nested unions, and unions of non-literal types.
-- A mixed union of symbols and strings is returned as **strings**. The gem does not return a mixed array.
-- Comments after the union are stripped, and the scan stops at the next declaration.
-
-Use `strict: true` (below) if you would rather see an error than an empty array.
+Use RBS literal unions as Ruby arrays. Keep enum values in your signatures and reuse them in forms, validations, and component options without maintaining the same list twice.
 
 ## Installation
 
-Add the gem to your Rails application's Gemfile and run `bundle install`:
+Add the gem to your Gemfile and run `bundle install`:
 
 ```ruby
 gem "rbs_enum"
 ```
 
-Requires Ruby 3.1+. In Rails, the gem reads signatures from `sig/` automatically.
+Requires Ruby 3.1 or later. Rails is optional.
 
 ## Usage
 
-RBS can describe a set of allowed values, but that list is not directly available to Ruby at runtime. Without the gem, you might repeat it:
+Define a literal union in a signature file:
 
 ```rbs
-# sig/button.rbs
-type button_color = :primary | :warning | :danger
+# sig/status.rbs
+type status = :draft | :published
 ```
+
+In Rails, signatures are read from your application's `sig/` directory automatically:
 
 ```ruby
-# app/components/button.rb
-class Button
-  COLORS = %i[primary warning danger]
-end
+RbsEnum.values("status") # => [:draft, :published]
 ```
 
-With RBS Enum, keep the signature and replace the duplicated Ruby list:
+Pass the alias name as written after `type`. Outside Rails, require the gem and configure the signature directory before looking up values:
 
 ```ruby
-# app/components/button.rb
-class Button
-  COLORS = RbsEnum.values("button_color")
+require "rbs_enum"
+
+RbsEnum.configure do |config|
+  config.sig_root = File.expand_path("sig", __dir__)
 end
+
+RbsEnum.values("status") # => [:draft, :published]
 ```
 
-Now `Button::COLORS` returns `[:primary, :warning, :danger]`. Use it wherever the application needs that list:
-
-```erb
-<%= form.select :color, Button::COLORS.map { |color| [color.to_s.humanize, color] } %>
-```
-
-String unions work too:
+String unions return strings and can supply values for an Active Record validation:
 
 ```rbs
 # sig/order.rbs
@@ -64,51 +47,62 @@ type order_status = "draft" | "submitted" | "fulfilled"
 ```
 
 ```ruby
-# app/models/order.rb
 class Order < ApplicationRecord
   validates :status, inclusion: { in: RbsEnum.values("order_status") }
 end
 ```
 
-Pass the alias name as written after `type`.
+## Configuration
 
-## Strict lookups
-
-By default an alias the gem cannot read returns `[]`. That is quiet, and a typo in the alias name looks the same as an empty enum. Pass `strict: true` to raise `RbsEnum::UnknownType` instead:
+Set application defaults with `configure`. In Rails, place this in an initializer:
 
 ```ruby
-RbsEnum.values("button_color", strict: true)
-```
-
-Set the default for the whole application through `configure`:
-
-```ruby
+# config/initializers/rbs_enum.rb
 RbsEnum.configure do |config|
+  config.sig_root = Rails.root.join("signatures")
   config.strict = true
 end
 ```
 
-A per-call `strict:` argument wins over the configured default, so `RbsEnum.values("maybe_missing", strict: false)` still returns `[]`. A strict lookup that raises is not cached.
+- `sig_root`: The directory searched recursively for `.rbs` files. Defaults to `Rails.root.join("sig")` in Rails; must be supplied outside Rails.
+- `strict`: Whether to raise `RbsEnum::UnknownType` when no literal values are found. Defaults to `false`, which returns `[]` instead.
 
-## Optional configuration
-
-If your signatures live outside `sig/`, configure their location:
-
-```ruby
-RbsEnum.configure do |config|
-  config.sig_root = Rails.root.join("signatures")
-end
-```
-
-For a single lookup elsewhere:
+Override either setting for an individual lookup:
 
 ```ruby
-RbsEnum.values("button_color", sig_root: "/path/to/signatures")
+RbsEnum.values("status", sig_root: "/path/to/signatures", strict: true)
+RbsEnum.values("maybe_missing", strict: false) # => []
 ```
 
-Outside Rails, set `sig_root` before reading values.
+Strict mode detects lookups with no results; it does not validate RBS syntax or ensure the entire alias is supported.
 
-Results are cached per signature root and alias name. Call `RbsEnum.clear_cache!` to drop that cache after changing signature files in a running process. It clears the cache only and leaves `sig_root` and `strict` alone. Rails calls it on each reload.
+## Supported types and limitations
+
+RBS Enum supports flat unions of symbol or string literals, including unions spread across multiple lines. Symbol unions return symbols, string unions return strings, and mixed symbol/string unions return strings. Comments are ignored while `#` characters inside quoted values are preserved.
+
+The gem scans signature files with regular expressions and has no dependency on the `rbs` gem. It does not build a type model or resolve references to other aliases. Generics, records, interfaces, and nested type expressions are outside its supported syntax.
+
+Unsupported expressions are not reliably rejected: the scanner can extract literals from part of an expression. For example:
+
+```rbs
+type partial_status = :draft | String
+```
+
+```ruby
+RbsEnum.values("partial_status", strict: true) # => [:draft]
+```
+
+Use aliases made entirely of supported literals when the returned array needs to represent every allowed value.
+
+## Caching and Rails reloading
+
+Results are cached by signature directory and alias name. After changing signature files in a running process, clear the cache with:
+
+```ruby
+RbsEnum.clear_cache!
+```
+
+This preserves your configuration. Rails clears the cache automatically during application reloading. Values already assigned to constants or passed to validations are refreshed only when that application code runs again. Strict lookups that raise do not add a cache entry.
 
 ## Development
 
@@ -116,8 +110,8 @@ Clone the repo, then run `bundle install` and `bundle exec rspec`. Include tests
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/NicolasJJensen/rbs_enum.
+Bug reports and pull requests are welcome on [GitHub](https://github.com/NicolasJJensen/rbs_enum).
 
 ## License
 
-The gem is available as open source under the terms of the [MIT License](https://opensource.org/licenses/MIT).
+The gem is available as open source under the terms of the [MIT License](LICENSE.txt).
